@@ -1,0 +1,81 @@
+# Deploy persistent TDX VM running the service
+# VM continues running after workflow completes
+# Uses 9P filesystem sharing - no SSH required
+
+name: Deploy Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_name:
+        description: 'Name for the VM'
+        required: true
+        default: 'example-app'
+      memory_gb:
+        description: 'Memory in GB'
+        required: true
+        default: '8'
+      cpus:
+        description: 'Number of CPUs'
+        required: true
+        default: '4'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, tdx]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to TDX VM
+        id: deploy
+        uses: posix4e/tdx_github_runner/.github/actions/launch-tdx@main
+        with:
+          vm_name: ${{ github.event.inputs.vm_name }}
+          docker_compose_path: './docker-compose.yml'
+          intel_api_key: ${{ secrets.INTEL_API_KEY }}
+          vm_memory_gb: ${{ github.event.inputs.memory_gb }}
+          vm_cpus: ${{ github.event.inputs.cpus }}
+          compose_up_args: '--build -d'
+          timeout_minutes: '10'
+
+      - name: Display deployment info
+        run: |
+          echo ""
+          echo "========================================="
+          echo "TDX Service Deployed"
+          echo "========================================="
+          echo ""
+          echo "VM Name:        ${{ steps.deploy.outputs.vm_name }}"
+          echo "Share Dir:      ${{ steps.deploy.outputs.share_dir }}"
+          echo ""
+          echo "The service is running inside a TDX Trust Domain."
+          echo "Docker compose has been executed with the Intel API key."
+          echo ""
+          echo "========================================="
+          echo "The VM will continue running until explicitly deleted."
+          echo "To delete: virsh destroy ${{ steps.deploy.outputs.vm_name }}"
+          echo "========================================="
+
+      - name: Save deployment info
+        run: |
+          mkdir -p deployment-info
+          cat > deployment-info/deployment.json << EOF
+          {
+            "vm_name": "${{ steps.deploy.outputs.vm_name }}",
+            "share_dir": "${{ steps.deploy.outputs.share_dir }}",
+            "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "github_run_id": "${{ github.run_id }}",
+            "github_sha": "${{ github.sha }}"
+          }
+          EOF
+
+          cat deployment-info/deployment.json
+
+      - name: Upload deployment info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info-${{ github.event.inputs.vm_name }}
+          path: deployment-info/
+          retention-days: 30
