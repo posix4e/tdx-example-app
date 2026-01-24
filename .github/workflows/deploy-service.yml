@@ -94,6 +94,50 @@ jobs:
 
           cat deployment-info/deployment.json
 
+      - name: Register with EasyEnclave Discovery
+        if: ${{ github.event.inputs.service_url != '' }}
+        run: |
+          # Read attestation data if available from share dir
+          SHARE_DIR="${{ steps.deploy.outputs.share_dir }}"
+          ATTESTATION_FILE="$SHARE_DIR/attestation.json"
+
+          # Build registration payload
+          PAYLOAD=$(cat << EOF
+          {
+            "name": "tdx-example-app",
+            "description": "Example TDX-attested application",
+            "endpoints": {"prod": "${{ github.event.inputs.service_url }}"},
+            "source_repo": "https://github.com/easyenclave/tdx-example-app",
+            "source_commit": "${{ github.sha }}",
+            "tags": ["example", "tdx", "demo"]
+          }
+          EOF
+          )
+
+          # Add attestation data if available
+          if [ -f "$ATTESTATION_FILE" ]; then
+            MRTD=$(jq -r '.mrtd // empty' "$ATTESTATION_FILE" 2>/dev/null || true)
+            if [ -n "$MRTD" ]; then
+              PAYLOAD=$(echo "$PAYLOAD" | jq --arg mrtd "$MRTD" '. + {mrtd: $mrtd}')
+            fi
+          fi
+
+          echo "Registering with EasyEnclave discovery..."
+          echo "Payload: $PAYLOAD"
+
+          RESPONSE=$(curl -s -X POST https://app.easyenclave.com/api/v1/register \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          echo "Response: $RESPONSE"
+
+          SERVICE_ID=$(echo "$RESPONSE" | jq -r '.service_id // empty')
+          if [ -n "$SERVICE_ID" ]; then
+            echo "Successfully registered with service ID: $SERVICE_ID"
+          else
+            echo "Warning: Registration may have failed"
+          fi
+
       - name: Upload deployment info
         uses: actions/upload-artifact@v4
         with:
