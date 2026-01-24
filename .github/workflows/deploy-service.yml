@@ -19,6 +19,10 @@ on:
         description: 'Number of CPUs'
         required: true
         default: '4'
+      service_url:
+        description: 'Public URL for this service (for discovery registration)'
+        required: false
+        default: 'https://example.easyenclave.com'
 
 jobs:
   deploy:
@@ -27,6 +31,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Create environment file
+        run: |
+          cat > .env << EOF
+          SERVICE_URL=${{ github.event.inputs.service_url }}
+          EASYENCLAVE_URL=https://app.easyenclave.com
+          GIT_COMMIT=${{ github.sha }}
+          EOF
+          cat .env
 
       - name: Deploy to TDX VM
         id: deploy

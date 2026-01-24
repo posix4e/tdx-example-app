@@ -3,6 +3,10 @@ services:
     build: .
     ports:
       - "8080:8080"
+    environment:
+      - SERVICE_URL=${SERVICE_URL:-}
+      - EASYENCLAVE_URL=${EASYENCLAVE_URL:-https://app.easyenclave.com}
+      - GIT_COMMIT=${GIT_COMMIT:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
