@@ -2,11 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install git (needed to install easyenclave SDK from GitHub)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
+# Install Python dependencies (SDK is included locally)
 COPY app/requirements.txt .
+COPY easyenclave-sdk/ /tmp/easyenclave-sdk/
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app

@@ -41,6 +41,14 @@ jobs:
           EOF
           cat .env
 
+      - name: Download EasyEnclave SDK
+        run: |
+          # Download the SDK from the easyenclave repo
+          curl -sL https://github.com/easyenclave/easyenclave/archive/refs/heads/main.tar.gz | tar xz
+          mv easyenclave-main/sdk easyenclave-sdk
+          rm -rf easyenclave-main
+          ls -la easyenclave-sdk/
+
       - name: Deploy to TDX VM
         id: deploy
         uses: posix4e/tdx_github_runner/.github/actions/launch-tdx@main
