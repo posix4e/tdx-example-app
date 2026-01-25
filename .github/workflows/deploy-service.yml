@@ -51,19 +51,15 @@ jobs:
 
       - name: Deploy to TDX with EasyEnclave registration
         id: deploy
-        uses: posix4e/tdx_github_runner/.github/actions/deploy-tdx@main
+        uses: easyenclave/easyenclave/.github/actions/deploy-tdx@main
         with:
           service_name: 'tdx-example-app'
-          service_description: 'Example TDX-attested application'
           service_url: ${{ github.event.inputs.service_url }}
           docker_compose_path: './docker-compose.yml'
           intel_api_key: ${{ secrets.INTEL_API_KEY }}
           source_repo: 'https://github.com/easyenclave/tdx-example-app'
           tags: '["example", "tdx", "demo"]'
-          vm_memory_gb: ${{ github.event.inputs.memory_gb }}
-          vm_cpus: ${{ github.event.inputs.cpus }}
           compose_up_args: '--build -d'
-          timeout_minutes: '10'
 
       - name: Display deployment info
         run: |
@@ -73,7 +69,6 @@ jobs:
           echo "========================================="
           echo ""
           echo "VM Name:        ${{ steps.deploy.outputs.vm_name }}"
-          echo "Share Dir:      ${{ steps.deploy.outputs.share_dir }}"
           echo "Service ID:     ${{ steps.deploy.outputs.service_id }}"
           echo "MRTD:           ${{ steps.deploy.outputs.mrtd }}"
           echo ""
@@ -91,7 +86,6 @@ jobs:
           cat > deployment-info/deployment.json << EOF
           {
             "vm_name": "${{ steps.deploy.outputs.vm_name }}",
-            "share_dir": "${{ steps.deploy.outputs.share_dir }}",
             "service_id": "${{ steps.deploy.outputs.service_id }}",
             "mrtd": "${{ steps.deploy.outputs.mrtd }}",
             "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",

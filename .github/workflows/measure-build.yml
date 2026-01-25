@@ -19,12 +19,10 @@ jobs:
 
       - name: Build and run in TDX VM
         id: measure
-        uses: posix4e/tdx_github_runner/.github/actions/measure-tdx@main
+        uses: easyenclave/easyenclave/.github/actions/measure-tdx@main
         with:
           intel_api_key: ${{ secrets.INTEL_API_KEY }}
           docker_compose_path: ./docker-compose.yml
-          vm_memory_gb: '4'
-          vm_cpus: '2'
           timeout_minutes: '10'
           compose_up_args: '--build -d'
           health_endpoint: '/health'
@@ -36,7 +34,6 @@ jobs:
           echo "TDX Build Complete"
           echo "========================================="
           echo "VM: ${{ steps.measure.outputs.vm_name }}"
-          echo "Compose Hash: ${{ steps.measure.outputs.compose_hash }}"
           echo ""
           echo "Attestation (VM-level):"
           echo '${{ steps.measure.outputs.attestation_json }}' | jq . 2>/dev/null || echo "No attestation"
