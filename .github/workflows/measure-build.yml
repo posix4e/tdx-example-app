@@ -17,6 +17,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Download EasyEnclave SDK
+        run: |
+          curl -sL https://github.com/easyenclave/easyenclave/archive/refs/heads/main.tar.gz | tar xz
+          mv easyenclave-main/sdk easyenclave-sdk
+          rm -rf easyenclave-main
+          ls -la easyenclave-sdk/
+
       - name: Build and run in TDX VM
         id: measure
         uses: easyenclave/easyenclave/.github/actions/measure-tdx@main
