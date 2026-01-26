@@ -1,5 +1,13 @@
-# Build in ephemeral TDX VM with attestation
-# Attestation is handled at VM level by the launcher
+# Build and Measure in TDX via Control Plane API
+#
+# This workflow deploys the app to a CI agent, gets attestation, then undeploys.
+# All operations go through the EasyEnclave control plane API.
+#
+# Prerequisites:
+# - Pre-provisioned CI agent (set CI_AGENT_ID in repository variables)
+# - Repository variables: EASYENCLAVE_URL, CI_AGENT_ID
+# - Repository secrets: INTEL_API_KEY
+
 name: Measure Build
 
 on:
@@ -8,31 +16,105 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      agent_id:
+        description: 'Agent ID (defaults to CI_AGENT_ID variable)'
+        required: false
 
 jobs:
   measure-build:
-    runs-on: [self-hosted, tdx]
+    runs-on: ubuntu-latest  # No TDX runner needed - just calls API
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download EasyEnclave SDK
-        run: |
-          curl -sL https://github.com/easyenclave/easyenclave/archive/refs/heads/main.tar.gz | tar xz
-          mv easyenclave-main/sdk easyenclave-sdk
-          rm -rf easyenclave-main
-          ls -la easyenclave-sdk/
-
-      - name: Build and run in TDX VM
+      - name: Deploy and Measure
         id: measure
-        uses: easyenclave/easyenclave/.github/actions/measure-tdx@main
-        with:
-          intel_api_key: ${{ secrets.INTEL_API_KEY }}
-          docker_compose_path: ./docker-compose.yml
-          timeout_minutes: '10'
-          compose_up_args: '--build -d'
-          health_endpoint: '/health'
+        env:
+          EASYENCLAVE_URL: ${{ vars.EASYENCLAVE_URL || 'https://app.easyenclave.com' }}
+          AGENT_ID: ${{ inputs.agent_id || vars.CI_AGENT_ID }}
+        run: |
+          if [ -z "$AGENT_ID" ]; then
+            echo "::error::No agent_id provided and CI_AGENT_ID variable not set"
+            echo "Set CI_AGENT_ID repository variable or provide agent_id input"
+            exit 1
+          fi
+
+          # Base64 encode the compose file
+          COMPOSE_B64=$(base64 -w0 docker-compose.yml)
+
+          # Submit deployment to CI agent
+          echo "Submitting build to agent $AGENT_ID..."
+
+          RESPONSE=$(curl -s -X POST "${EASYENCLAVE_URL}/api/v1/deployments" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"agent_id\": \"${AGENT_ID}\",
+              \"compose\": \"${COMPOSE_B64}\",
+              \"build_context\": {},
+              \"config\": {
+                \"health_endpoint\": \"/health\",
+                \"intel_api_key\": \"${{ secrets.INTEL_API_KEY }}\",
+                \"compose_up_args\": \"--build -d\"
+              }
+            }")
+
+          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '.deployment_id // empty')
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::error::Failed to submit deployment"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          echo "Deployment submitted: $DEPLOYMENT_ID"
+
+          # Wait for completion
+          echo "Waiting for build and attestation..."
+          TIMEOUT=600
+          START_TIME=$(date +%s)
+
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "::error::Timeout waiting for build"
+              exit 1
+            fi
+
+            DEPLOY_STATUS=$(curl -s "${EASYENCLAVE_URL}/api/v1/deployments/${DEPLOYMENT_ID}")
+            STATUS=$(echo "$DEPLOY_STATUS" | jq -r '.status')
+
+            case "$STATUS" in
+              "completed")
+                ATTESTATION=$(echo "$DEPLOY_STATUS" | jq -c '.attestation // {}')
+                MRTD=$(echo "$ATTESTATION" | jq -r '.tdx.measurements.mrtd // empty')
+
+                echo "attestation=$ATTESTATION" >> $GITHUB_OUTPUT
+                echo "mrtd=$MRTD" >> $GITHUB_OUTPUT
+                echo ""
+                echo "Build completed with attestation!"
+                break
+                ;;
+              "failed")
+                ERROR=$(echo "$DEPLOY_STATUS" | jq -r '.error // "Unknown error"')
+                echo "::error::Build failed: $ERROR"
+                exit 1
+                ;;
+              *)
+                echo "  Status: $STATUS (${ELAPSED}s elapsed)"
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          # Undeploy after measurement (reset agent for next use)
+          echo "Undeploying agent for next use..."
+          curl -s -X POST "${EASYENCLAVE_URL}/api/v1/agents/${AGENT_ID}/undeploy" || true
 
       - name: Display results
         run: |
@@ -40,8 +122,23 @@ jobs:
           echo "========================================="
           echo "TDX Build Complete"
           echo "========================================="
-          echo "VM: ${{ steps.measure.outputs.vm_name }}"
           echo ""
-          echo "Attestation (VM-level):"
-          echo '${{ steps.measure.outputs.attestation_json }}' | jq . 2>/dev/null || echo "No attestation"
+          echo "Deployment ID: ${{ steps.measure.outputs.deployment_id }}"
+          echo "MRTD:          ${{ steps.measure.outputs.mrtd }}"
+          echo ""
+          echo "Attestation:"
+          echo '${{ steps.measure.outputs.attestation }}' | jq . 2>/dev/null || echo "No attestation"
           echo "========================================="
+
+      - name: Save attestation artifact
+        run: |
+          mkdir -p attestation
+          echo '${{ steps.measure.outputs.attestation }}' | jq . > attestation/attestation.json || echo '{}' > attestation/attestation.json
+          cat attestation/attestation.json
+
+      - name: Upload attestation
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestation-${{ github.sha }}
+          path: attestation/
+          retention-days: 30

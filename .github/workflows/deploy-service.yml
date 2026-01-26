@@ -1,83 +1,110 @@
-# Deploy persistent TDX VM running the service
-# VM continues running after workflow completes
-# Uses 9P filesystem sharing - no SSH required
+# Deploy to TDX Agent via Control Plane API
+#
+# This workflow deploys the example app to a pre-provisioned TDX agent.
+# All deployments go through the EasyEnclave control plane API.
+#
+# Prerequisites:
+# - Pre-provisioned TDX agent (get agent_id from control plane)
+# - Repository variables: EASYENCLAVE_URL
+# - Repository secrets: INTEL_API_KEY
 
 name: Deploy Service
 
 on:
   workflow_dispatch:
     inputs:
-      vm_name:
-        description: 'Name for the VM'
+      agent_id:
+        description: 'Agent ID (get from control plane UI or API)'
         required: true
-        default: 'example-app'
-      memory_gb:
-        description: 'Memory in GB'
-        required: true
-        default: '8'
-      cpus:
-        description: 'Number of CPUs'
-        required: true
-        default: '4'
       service_url:
-        description: 'Public URL for this service (for discovery registration)'
-        required: false
+        description: 'Public URL for this service'
+        required: true
         default: 'https://example.easyenclave.com'
 
 jobs:
   deploy:
-    runs-on: [self-hosted, tdx]
+    runs-on: ubuntu-latest  # No TDX runner needed - just calls API
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create environment file
-        run: |
-          cat > .env << EOF
-          SERVICE_URL=${{ github.event.inputs.service_url }}
-          EASYENCLAVE_URL=https://app.easyenclave.com
-          GIT_COMMIT=${{ github.sha }}
-          EOF
-          cat .env
-
-      - name: Download EasyEnclave SDK
-        run: |
-          # Download the SDK from the easyenclave repo
-          curl -sL https://github.com/easyenclave/easyenclave/archive/refs/heads/main.tar.gz | tar xz
-          mv easyenclave-main/sdk easyenclave-sdk
-          rm -rf easyenclave-main
-          ls -la easyenclave-sdk/
-
-      - name: Deploy to TDX with EasyEnclave registration
+      - name: Deploy to TDX Agent
         id: deploy
-        uses: easyenclave/easyenclave/.github/actions/deploy-tdx@main
-        with:
-          service_name: 'tdx-example-app'
-          service_url: ${{ github.event.inputs.service_url }}
-          docker_compose_path: './docker-compose.yml'
-          intel_api_key: ${{ secrets.INTEL_API_KEY }}
-          source_repo: 'https://github.com/easyenclave/tdx-example-app'
-          tags: '["example", "tdx", "demo"]'
-          compose_up_args: '--build -d'
+        env:
+          EASYENCLAVE_URL: ${{ vars.EASYENCLAVE_URL || 'https://app.easyenclave.com' }}
+        run: |
+          # Base64 encode the compose file
+          COMPOSE_B64=$(base64 -w0 docker-compose.yml)
 
-      - name: Display deployment info
+          # Submit deployment to control plane
+          echo "Submitting deployment to $EASYENCLAVE_URL..."
+
+          RESPONSE=$(curl -s -X POST "${EASYENCLAVE_URL}/api/v1/deployments" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"agent_id\": \"${{ inputs.agent_id }}\",
+              \"compose\": \"${COMPOSE_B64}\",
+              \"build_context\": {},
+              \"config\": {
+                \"service_name\": \"tdx-example-app\",
+                \"service_url\": \"${{ inputs.service_url }}\",
+                \"health_endpoint\": \"/health\",
+                \"intel_api_key\": \"${{ secrets.INTEL_API_KEY }}\",
+                \"source_repo\": \"https://github.com/easyenclave/tdx-example-app\",
+                \"source_commit\": \"${{ github.sha }}\",
+                \"tags\": [\"example\", \"tdx\", \"demo\"]
+              }
+            }")
+
+          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '.deployment_id // empty')
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::error::Failed to submit deployment"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          echo "Deployment submitted: $DEPLOYMENT_ID"
+
+          # Poll until deployed
+          echo "Waiting for deployment to complete..."
+          while true; do
+            DEPLOY_STATUS=$(curl -s "${EASYENCLAVE_URL}/api/v1/deployments/${DEPLOYMENT_ID}")
+            STATUS=$(echo "$DEPLOY_STATUS" | jq -r '.status')
+            echo "  Status: $STATUS"
+
+            if [ "$STATUS" = "completed" ]; then
+              SERVICE_ID=$(echo "$DEPLOY_STATUS" | jq -r '.service_id // empty')
+              MRTD=$(echo "$DEPLOY_STATUS" | jq -r '.attestation.tdx.measurements.mrtd // empty')
+              echo "service_id=$SERVICE_ID" >> $GITHUB_OUTPUT
+              echo "mrtd=$MRTD" >> $GITHUB_OUTPUT
+              break
+            elif [ "$STATUS" = "failed" ]; then
+              ERROR=$(echo "$DEPLOY_STATUS" | jq -r '.error // "Unknown error"')
+              echo "::error::Deployment failed: $ERROR"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+      - name: Display results
         run: |
           echo ""
           echo "========================================="
           echo "TDX Service Deployed"
           echo "========================================="
           echo ""
-          echo "VM Name:        ${{ steps.deploy.outputs.vm_name }}"
-          echo "Service ID:     ${{ steps.deploy.outputs.service_id }}"
-          echo "MRTD:           ${{ steps.deploy.outputs.mrtd }}"
+          echo "Deployment ID: ${{ steps.deploy.outputs.deployment_id }}"
+          echo "Service ID:    ${{ steps.deploy.outputs.service_id }}"
+          echo "MRTD:          ${{ steps.deploy.outputs.mrtd }}"
           echo ""
-          echo "The service is running inside a TDX Trust Domain"
-          echo "and has been registered with EasyEnclave Discovery."
+          echo "View your service at:"
+          echo "  ${{ vars.EASYENCLAVE_URL || 'https://app.easyenclave.com' }}/services/${{ steps.deploy.outputs.service_id }}"
           echo ""
-          echo "========================================="
-          echo "The VM will continue running until explicitly deleted."
-          echo "To delete: virsh destroy ${{ steps.deploy.outputs.vm_name }}"
+          echo "Service URL: ${{ inputs.service_url }}"
           echo "========================================="
 
       - name: Save deployment info
@@ -85,20 +112,21 @@ jobs:
           mkdir -p deployment-info
           cat > deployment-info/deployment.json << EOF
           {
-            "vm_name": "${{ steps.deploy.outputs.vm_name }}",
+            "agent_id": "${{ inputs.agent_id }}",
+            "deployment_id": "${{ steps.deploy.outputs.deployment_id }}",
             "service_id": "${{ steps.deploy.outputs.service_id }}",
             "mrtd": "${{ steps.deploy.outputs.mrtd }}",
+            "service_url": "${{ inputs.service_url }}",
             "deployed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "github_run_id": "${{ github.run_id }}",
             "github_sha": "${{ github.sha }}"
           }
           EOF
-
           cat deployment-info/deployment.json
 
       - name: Upload deployment info
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-info-${{ github.event.inputs.vm_name }}
+          name: deployment-info
           path: deployment-info/
           retention-days: 30
