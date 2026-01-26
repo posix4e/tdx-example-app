@@ -1,0 +1,17 @@
+# FastAPI and server
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+httpx>=0.24.0
+pydantic>=2.0.0
+
+# Noise Protocol for E2E encryption
+noiseprotocol>=0.3.1
+
+# Cryptography for attestation binding key
+cryptography>=41.0.0
+
+# HTTP client for Intel Trust Authority
+requests>=2.31.0
+
+# WebSocket support
+websockets>=11.0.0

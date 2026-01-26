@@ -1,0 +1,11 @@
+# Noise Protocol for E2E encryption
+noiseprotocol>=0.3.1
+
+# Cryptography for session binding verification
+cryptography>=41.0.0
+
+# WebSocket client
+websocket-client>=1.6.0
+
+# HTTP client for EasyEnclave discovery
+requests>=2.31.0

@@ -1,0 +1,48 @@
+# Private LLM Proxy with Noise Protocol E2E Encryption
+#
+# This docker-compose runs:
+# 1. Ollama - local LLM server
+# 2. Proxy - FastAPI with Noise Protocol endpoint
+#
+# The proxy provides:
+# - /health - plain HTTP health check
+# - /ws/noise - E2E encrypted WebSocket via Noise Protocol
+#
+# IMPORTANT: This must be deployed in a TDX Trust Domain.
+# The proxy requires access to /sys/kernel/config/tsm/report for attestation.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  proxy:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - MODEL_NAME=${MODEL_NAME:-qwen2.5:0.5b}
+      - INTEL_API_KEY=${INTEL_API_KEY}
+      - INTEL_API_URL=${INTEL_API_URL:-https://api.trustauthority.intel.com}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Required: Mount TSM interface for TDX attestation
+    volumes:
+      - /sys/kernel/config:/sys/kernel/config:ro
+
+volumes:
+  ollama_data:
