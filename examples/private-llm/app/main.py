@@ -25,6 +25,7 @@ exists only in TEE memory.
 """
 
 import hashlib
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -39,10 +40,36 @@ from pydantic import BaseModel
 from attestation import BoundAttestation, generate_bound_attestation
 from noise_server import NOISE_PROTOCOL, NoiseServer, NoiseSession, handle_noise_message
 
+
+def get_intel_api_key() -> str:
+    """Get Intel API key from environment or launcher config."""
+    # First try environment variable
+    key = os.getenv("INTEL_API_KEY")
+    if key:
+        return key
+
+    # Try launcher config file (mounted share directory)
+    config_paths = [
+        Path("/share/config.json"),  # Standard share mount
+        Path("/app/config.json"),    # Alternative location
+    ]
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text())
+                key = config.get("intel_api_key")
+                if key:
+                    return key
+            except Exception:
+                pass
+
+    raise RuntimeError("INTEL_API_KEY not found in environment or config file")
+
+
 # Configuration
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:0.5b")
-INTEL_API_KEY = os.getenv("INTEL_API_KEY")
+INTEL_API_KEY = get_intel_api_key()
 INTEL_API_URL = os.getenv("INTEL_API_URL", "https://api.trustauthority.intel.com")
 
 logging.basicConfig(level=logging.INFO)

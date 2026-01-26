@@ -30,7 +30,6 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - MODEL_NAME=${MODEL_NAME:-qwen2.5:0.5b}
-      - INTEL_API_KEY=${INTEL_API_KEY}
       - INTEL_API_URL=${INTEL_API_URL:-https://api.trustauthority.intel.com}
     depends_on:
       ollama:
@@ -40,9 +39,11 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    # Required: Mount TSM interface for TDX attestation
     volumes:
+      # Mount TSM interface for TDX attestation
       - /sys/kernel/config:/sys/kernel/config:ro
+      # Mount share directory to read launcher config (contains intel_api_key)
+      - .:/share:ro
 
 volumes:
   ollama_data:
