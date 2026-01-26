@@ -59,18 +59,29 @@ def get_intel_api_key() -> str:
                 config = json.loads(config_path.read_text())
                 key = config.get("intel_api_key")
                 if key:
+                    logger.info(f"Loaded intel_api_key from {config_path}")
                     return key
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to read {config_path}: {e}")
 
-    raise RuntimeError("INTEL_API_KEY not found in environment or config file")
+    raise RuntimeError(
+        "INTEL_API_KEY not found. Set environment variable or mount config.json to /share"
+    )
 
 
-# Configuration
+# Configuration - lazy loading for INTEL_API_KEY to ensure volumes are mounted
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5:0.5b")
-INTEL_API_KEY = get_intel_api_key()
 INTEL_API_URL = os.getenv("INTEL_API_URL", "https://api.trustauthority.intel.com")
+_intel_api_key: str | None = None
+
+
+def _get_cached_intel_api_key() -> str:
+    """Get Intel API key with caching."""
+    global _intel_api_key
+    if _intel_api_key is None:
+        _intel_api_key = get_intel_api_key()
+    return _intel_api_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -131,8 +142,9 @@ async def initialize_attestation():
     """Generate TDX attestation with binding key on startup."""
     global attestation, noise_server
 
+    intel_api_key = _get_cached_intel_api_key()
     attestation = generate_bound_attestation(
-        intel_api_key=INTEL_API_KEY,
+        intel_api_key=intel_api_key,
         intel_api_url=INTEL_API_URL,
     )
     logger.info("TDX attestation generated successfully")
