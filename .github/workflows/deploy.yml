@@ -1,14 +1,14 @@
 # Deploy to TDX Agent via Control Plane API
 #
 # This workflow deploys the example app to a pre-provisioned TDX agent.
-# All deployments go through the EasyEnclave control plane API.
+# No TDX runner needed - all deployments go through the API.
 #
 # Prerequisites:
-# - Pre-provisioned TDX agent (get agent_id from control plane)
+# - Pre-provisioned TDX agent (get agent_id from EasyEnclave dashboard)
 # - Repository variables: EASYENCLAVE_URL
 # - Repository secrets: INTEL_API_KEY
 
-name: Deploy Service
+name: Deploy
 
 on:
   workflow_dispatch:
